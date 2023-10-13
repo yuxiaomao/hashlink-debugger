@@ -25,15 +25,13 @@
 #	include <sys/wait.h>
 #	include <sys/user.h>
 #	include <signal.h>
+#	include <errno.h>
 #	define USE_PTRACE
 #endif
 
 #ifdef HL_MAC
 #	include <mdbg/mdbg.h>
 #endif
-
-//#define dbg_printf(...) printf(__VA_ARGS__)
-#define dbg_printf(...)
 
 #if defined(HL_WIN)
 static HANDLE last_process = NULL, last_thread = NULL;
@@ -65,16 +63,109 @@ static void CleanHandles() {
 }
 #endif
 
+#define STATUS_TIMEOUT -1
+#define STATUS_EXIT 0
+#define STATUS_BREAKPOINT 1
+#define STATUS_SINGLESTEP 2
+#define STATUS_ERROR 3
+#define STATUS_HANDLED 4
+#define STATUS_STACKOVERFLOW 5
+
+#ifdef USE_PTRACE
+#include <semaphore.h>
+#include <pthread.h>
+
+#define PTRACE_MAX_CONTEXTS 8
+
+struct ptrace_context {
+	int pid;
+	int status;
+	int tid;
+	bool has_event;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+	pthread_t thread;
+};
+
+static struct ptrace_context ptrace_contexts[PTRACE_MAX_CONTEXTS] = {0};
+
+static struct ptrace_context *ptrace_find_context(int pid) {
+	for(int i = 0; i < PTRACE_MAX_CONTEXTS; i++) {
+		if(ptrace_contexts[i].pid == pid) {
+			return &ptrace_contexts[i];
+		}
+	}
+	return NULL;
+}
+
+static void *ptrace_thread_callback(void* data) {
+	struct ptrace_context *ctx = data;
+	while(true) {
+		int status = 0;
+		int thread_id = waitpid(ctx->pid, &status, 0);
+		pthread_mutex_lock(&ctx->mutex);
+		if(thread_id == -1) {
+			ctx->status = STATUS_ERROR;
+		} else {
+			ctx->tid = thread_id;
+			if( WIFEXITED(status) ) {
+				ctx->status = STATUS_EXIT;
+			} else if( WIFSTOPPED(status) ) {
+				int sig = WSTOPSIG(status);
+				if( sig == SIGSTOP || sig == SIGTRAP ) {
+					ctx->status = STATUS_BREAKPOINT;
+				} else {
+					ctx->status = STATUS_ERROR;
+				}
+			} else {
+				ctx->status = STATUS_HANDLED;
+			}
+		}
+		ctx->has_event = true;
+		pthread_cond_signal(&ctx->cond);
+		pthread_cond_wait(&ctx->cond, &ctx->mutex);
+		if(ctx->status == STATUS_EXIT) {
+			pthread_mutex_unlock(&ctx->mutex);
+			return NULL;
+		}
+		pthread_mutex_unlock(&ctx->mutex);
+	}
+	return NULL;
+}
+#endif
+
 HL_API bool hl_debug_start( int pid ) {
 #	if defined(HL_WIN)
 	last_pid = -1;
-	BOOL r = (bool)DebugActiveProcess(pid);
-	dbg_printf("hl_debug_start %d : %d\n", pid, r);
-	return r;
+	return (bool)DebugActiveProcess(pid);
 #	elif defined(HL_MAC)
 	return mdbg_session_attach(pid);
 #	elif defined(USE_PTRACE)
-	return ptrace(PTRACE_ATTACH,pid,0,0) >= 0;
+	bool ret = ptrace(PTRACE_ATTACH,pid,0,0) >= 0;
+	if(ret) {
+		for(int i = 0; i < PTRACE_MAX_CONTEXTS; i++) {
+			if(ptrace_contexts[i].pid == 0) {
+				struct ptrace_context *ctx = &ptrace_contexts[i];
+				ctx->pid = pid;
+				ctx->status = STATUS_HANDLED;
+				ctx->tid = 0;
+				pthread_mutexattr_t mutexattr;
+				pthread_mutexattr_init(&mutexattr);
+				pthread_mutex_init(&ctx->mutex, &mutexattr);
+				pthread_mutexattr_destroy(&mutexattr);
+				pthread_condattr_t condattr;
+				pthread_condattr_init(&condattr);
+				pthread_cond_init(&ctx->cond, &condattr);
+				pthread_condattr_destroy(&condattr);
+				pthread_attr_t attr;
+				pthread_attr_init(&attr);
+				pthread_create(&ctx->thread, &attr, ptrace_thread_callback, ctx);
+				pthread_attr_destroy(&attr);
+				return true;
+			}
+		}
+	}
+	return false;
 #	else
 	return false;
 #	endif
@@ -84,11 +175,21 @@ HL_API bool hl_debug_stop( int pid ) {
 #	if defined(HL_WIN)
 	BOOL b = DebugActiveProcessStop(pid);
 	CleanHandles();
-	dbg_printf("hl_debug_stop %d : %d\n", pid, b);
 	return (bool)b;
 #	elif defined(HL_MAC)
 	return mdbg_session_detach(pid);
 #	elif defined(USE_PTRACE)
+	for(int i = 0; i < PTRACE_MAX_CONTEXTS; i++) {
+		if(ptrace_contexts[i].pid == pid) {
+			struct ptrace_context *ctx = &ptrace_contexts[i];
+			ctx->pid = 0;
+			ctx->status = STATUS_HANDLED;
+			ctx->tid = 0;
+			pthread_mutex_destroy(&ctx->mutex);
+			pthread_cond_destroy(&ctx->cond);
+			pthread_kill(ctx->thread, SIGKILL);
+		}
+	}
 	return ptrace(PTRACE_DETACH,pid,0,0) >= 0;
 #	else
 	return false;
@@ -97,9 +198,7 @@ HL_API bool hl_debug_stop( int pid ) {
 
 HL_API bool hl_debug_breakpoint( int pid ) {
 #	if defined(HL_WIN)
-	BOOL b = (bool)DebugBreakProcess(OpenPID(pid));
-	dbg_printf("hl_debug_breakpoint %d : %d\n", pid, b);
-	return b;
+	return (bool)DebugBreakProcess(OpenPID(pid));
 #	elif defined(HL_MAC)
 	return mdbg_session_pause(pid);
 #	elif defined(USE_PTRACE)
@@ -111,11 +210,7 @@ HL_API bool hl_debug_breakpoint( int pid ) {
 
 HL_API bool hl_debug_read( int pid, vbyte *addr, vbyte *buffer, int size ) {
 #	if defined(HL_WIN)
-	BOOL b = (bool)ReadProcessMemory(OpenPID(pid),addr,buffer,size,NULL);
-	dbg_printf("hl_debug_read %d %0llX %0llX %d -> %d\n", pid, (unsigned long long) addr, (unsigned long long)buffer, size, b);
-	if (!b)
-		printf("error: %d\n", GetLastError());
-	return b;
+	return (bool)ReadProcessMemory(OpenPID(pid),addr,buffer,size,NULL);
 #	elif defined(HL_MAC)
 	return mdbg_read_memory(pid, addr, buffer, size);
 #	elif defined(USE_PTRACE)
@@ -139,9 +234,7 @@ HL_API bool hl_debug_read( int pid, vbyte *addr, vbyte *buffer, int size ) {
 
 HL_API bool hl_debug_write( int pid, vbyte *addr, vbyte *buffer, int size ) {
 #	if defined(HL_WIN)
-	BOOL b = (bool)WriteProcessMemory(OpenPID(pid), addr, buffer, size, NULL);
-	dbg_printf("hl_debug_write %d %0llX %0llX %d -> %d\n", pid, (unsigned long long)addr, (unsigned long long) buffer, size, b);
-	return b;
+	return (bool)WriteProcessMemory(OpenPID(pid),addr,buffer,size,NULL);
 #	elif defined(HL_MAC)
 	return mdbg_write_memory(pid, addr, buffer, size);
 #	elif defined(USE_PTRACE)
@@ -166,9 +259,7 @@ HL_API bool hl_debug_write( int pid, vbyte *addr, vbyte *buffer, int size ) {
 
 HL_API bool hl_debug_flush( int pid, vbyte *addr, int size ) {
 #	if defined(HL_WIN)
-	BOOL b = (bool)FlushInstructionCache(OpenPID(pid),addr,size);
-	dbg_printf("hl_debug_flush %d %0llX %d -> %d\n", pid, (unsigned long long)addr, size, b);
-	return b;
+	return (bool)FlushInstructionCache(OpenPID(pid),addr,size);
 #	elif defined(HL_MAC)
 	return true;
 #	elif defined(USE_PTRACE)
@@ -209,13 +300,14 @@ static void *get_reg( int r ) {
 		case 1: return &regs->rbp;
 		case 2: return &regs->rip;
 		case 10: return &regs->rax;
+		case 11: return (void*)(-((int_val)&fp->xmm_space[0])-1);
 #		else
 		case 0: return &regs->esp;
 		case 1: return &regs->ebp;
 		case 2: return &regs->eip;
 		case 10: return &regs->eax;
+		case 11: return -1;
 #		endif
-		case 11: return (void*)(-((int_val)&fp->xmm_space[0])-1);
 		case 3: return &regs->eflags;
 		default: return &user->u_debugreg[r-4];
 		}
@@ -250,10 +342,6 @@ HL_API int hl_debug_wait( int pid, int *thread, int timeout ) {
 		default:
 			return 3;
 		}
-	case CREATE_THREAD_DEBUG_EVENT:
-	case LOAD_DLL_DEBUG_EVENT:
-	case EXIT_THREAD_DEBUG_EVENT:
-		ContinueDebugEvent(e.dwProcessId, e.dwThreadId, DBG_CONTINUE);
 		break;
 	case EXIT_PROCESS_DEBUG_EVENT:
 		return 0;
@@ -265,20 +353,53 @@ HL_API int hl_debug_wait( int pid, int *thread, int timeout ) {
 #	elif defined(HL_MAC)
 	return mdbg_session_wait(pid, thread, timeout);
 #	elif defined(USE_PTRACE)
-	int status;
-	int ret = waitpid(pid,&status,0);
-	//dbg_printf("WAITPID=%X %X\n",ret,status);
-	*thread = ret;
-	if( WIFEXITED(status) )
-		return 0;
-	if( WIFSTOPPED(status) ) {
-		int sig = WSTOPSIG(status);
-		//dbg_printf(" STOPSIG=%d\n",sig);
-		if( sig == SIGSTOP || sig == SIGTRAP )
-			return 1;
-		return 3;
+	struct ptrace_context *ctx = ptrace_find_context(pid);
+	if(ctx == NULL) {
+		return STATUS_ERROR;
 	}
-	return 4;
+	pthread_mutex_lock(&ctx->mutex);
+	if(!ctx->has_event) {
+		if(timeout == 0) {
+			pthread_cond_wait(&ctx->cond, &ctx->mutex);
+		} else {
+			struct timespec spec;
+			clock_gettime(CLOCK_REALTIME, &spec);
+			spec.tv_sec += timeout / 1000;
+			spec.tv_nsec += (timeout % 1000) * 1000000;
+			if(pthread_cond_timedwait(&ctx->cond, &ctx->mutex, &spec) < 0) {
+				return STATUS_TIMEOUT;
+			}
+		}
+	}
+	*thread = ctx->tid;
+	int status = ctx->status;
+	if(status == STATUS_BREAKPOINT) {
+		// detect and reset the singlestep flag
+		// to match windows and macos behaviour
+		size_t reg = offsetof(struct user_regs_struct, eflags);
+		errno = 0;
+		size_t flags = (size_t)ptrace(PTRACE_PEEKUSER, ctx->tid, reg , 0);
+
+		if(errno != 0) {
+			printf("PTRACE_PEEKUSER failed!\n");
+			printf("errno: %i, pid: %i\n", errno, ctx->pid);
+			fflush(stdout);
+		} else if((flags & 0x100) != 0) {
+			flags &= ~0x100;
+			if(ptrace(PTRACE_POKEUSER, ctx->tid, reg, flags) < 0) {
+				printf("PTRACE_POKEUSER failed!\n");
+				fflush(stdout);
+			} else {
+				ctx->status = status = STATUS_SINGLESTEP;
+			}
+		}
+	}
+	pthread_mutex_unlock(&ctx->mutex);
+	if(ctx->has_event) {
+		ctx->has_event = false;
+		pthread_cond_signal(&ctx->cond);
+	}
+	return status;
 #	else
 	return 0;
 #	endif
@@ -286,9 +407,7 @@ HL_API int hl_debug_wait( int pid, int *thread, int timeout ) {
 
 HL_API bool hl_debug_resume( int pid, int thread ) {
 #	if defined(HL_WIN)
-	BOOL b = (bool)ContinueDebugEvent(pid, thread, DBG_CONTINUE);
-	dbg_printf("hl_debug_resume %d %d -> %d\n", pid, thread, b);
-	return b;
+	return (bool)ContinueDebugEvent(pid, thread, DBG_CONTINUE);
 #	elif defined(HL_MAC)
 	return mdbg_session_resume(pid);
 #	elif defined(USE_PTRACE)
@@ -350,24 +469,16 @@ HL_API void *hl_debug_read_register( int pid, int thread, int reg, bool is64 ) {
 #	endif
 	CONTEXT c;
 	c.ContextFlags = CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS;
-	if (!GetThreadContext(OpenTID(thread), &c)) {
-		dbg_printf("hl_debug_read_register(1) %d %d %d %d -> %0llX\n", pid, thread, reg, is64, (unsigned long long) NULL);
+	if( !GetThreadContext(OpenTID(thread),&c) )
 		return NULL;
-	}
-	if (reg == 3) {
-		dbg_printf("hl_debug_read_register(2) %d %d %d %d -> %0llX\n", pid, thread, reg, is64, (unsigned long long)(int_val)c.EFlags);
+	if( reg == 3 )
 		return (void*)(int_val)c.EFlags;
-	}
-	if (reg == 11) {
+	if( reg == 11 )
 #ifdef HL_64
-		void* r = (void*)(int_val)c.FltSave.XmmRegisters[0].Low;
-		dbg_printf("hl_debug_read_register(3) %d %d %d %d -> %0llX\n", pid, thread, reg, is64, (unsigned long long)r);
-		return (void*)r;
+		return (void*)(int_val)c.FltSave.XmmRegisters[0].Low;
 #else
-		return (void*)*(int_val*)&c.ExtendedRegisters[10 * 16];
+		return (void*)*(int_val*)&c.ExtendedRegisters[10*16];
 #endif
-	}
-	dbg_printf("hl_debug_read_register(4) %d %d %d %d -> %0llX\n", pid, thread, reg, is64, (unsigned long long) *GetContextReg(&c, reg));
 	return (void*)*GetContextReg(&c,reg);
 #	elif defined(HL_MAC)
 	return mdbg_read_register(pid, thread, get_reg(reg), is64);
@@ -407,10 +518,8 @@ HL_API bool hl_debug_write_register( int pid, int thread, int reg, void *value, 
 #	endif
 	CONTEXT c;
 	c.ContextFlags = CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS;
-	if (!GetThreadContext(OpenTID(thread), &c)) {
-		dbg_printf("hl_debug_write_register %d %d %d %0llX %d %d\n", pid, thread, reg, (unsigned long long) value, is64, false);
+	if( !GetThreadContext(OpenTID(thread),&c) )
 		return false;
-	}
 	if( reg == 3 )
 		c.EFlags = (int)(int_val)value;
 	else if( reg == 11 )
@@ -421,9 +530,7 @@ HL_API bool hl_debug_write_register( int pid, int thread, int reg, void *value, 
 #		endif
 	else
 		*GetContextReg(&c,reg) = (REGDATA)value;
-	BOOL b = (bool)SetThreadContext(OpenTID(thread),&c);
-	dbg_printf("hl_debug_write_register %d %d %d %0llX %d %d\n", pid, thread, reg, (unsigned long long) value, is64, b);
-	return b;
+	return (bool)SetThreadContext(OpenTID(thread),&c);
 #	elif defined(HL_MAC)
 	return mdbg_write_register(pid, thread, get_reg(reg), value, is64);
 #	elif defined(USE_PTRACE)

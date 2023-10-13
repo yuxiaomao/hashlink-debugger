@@ -1,5 +1,6 @@
-all:
-
+build:
+	cd hldebug-wrapper && node-gyp configure && node-gyp build
+	haxe build.hxml
 deps:
 	npm install
 cleanup:
@@ -20,3 +21,5 @@ package: cleanup build
 # - select Organization:All + Full Access
 publish:
 	vsce publish -p `cat vsce_token.txt`
+
+.PHONY: build
