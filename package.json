@@ -1,7 +1,7 @@
 {
 	"name": "haxe-hl",
 	"displayName": "HashLink Debugger",
-	"version": "1.4.6",
+	"version": "1.4.8",
 	"publisher": "HaxeFoundation",
 	"license": "MIT",
 	"description": "Debugger for Haxe/HashLink applications",
@@ -49,6 +49,21 @@
 		"onDebugResolve:hl"
 	],
 	"contributes": {
+		"configuration": {
+			"title": "HashLink Debugger",
+			"properties": {
+				"hldebug.verbose": {
+					"markdownDescription": "Show verbose debugger trace.",
+					"type": "boolean",
+					"default": false
+				},
+				"hldebug.defaultPort": {
+					"markdownDescription": "Default debug port used to connect to HL virtual machine.",
+					"type": "integer",
+					"default": 6112
+				}
+			}
+		},
 		"debuggers": [
 			{
 				"type": "hl",
@@ -143,16 +158,32 @@
 							"type": "haxe",
 							"args": "active configuration"
 						}
+					}
+				],
+				"configurationSnippets": [
+					{
+						"label": "HashLink: Launch",
+						"description": "A new configuration for launch and debug.",
+						"body": {
+							"name": "${1:HashLink (launch)}",
+							"request": "launch",
+							"type": "hl",
+							"cwd": "^\"\\${workspaceFolder}\"",
+							"preLaunchTask": {
+								"type": "haxe",
+								"args": "active configuration"
+							}
+						}
 					},
 					{
-						"name": "HashLink (attach)",
-						"request": "attach",
-						"port": 6112,
-						"type": "hl",
-						"cwd": "${workspaceFolder}",
-						"preLaunchTask": {
-							"type": "haxe",
-							"args": "active configuration"
+						"label": "HashLink: Attach",
+						"description": "A new configuration for attaching to a running program.",
+						"body": {
+							"name": "${1:HashLink (attach)}",
+							"request": "attach",
+							"type": "hl",
+							"cwd": "^\"\\${workspaceFolder}\"",
+							"port": 6112
 						}
 					}
 				]

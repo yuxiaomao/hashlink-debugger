@@ -495,8 +495,13 @@ class Eval {
 	}
 
 	function compare(a:Value,b:Value) : Int {
-		var d = getNum(a) - getNum(b);
-		return d == 0 ? 0 : d > 0 ? 1 : -1;
+		switch [a.v, b.v] {
+		case [VString(as,_), VString(bs,_)]:
+			return Reflect.compare(as, bs);
+		default:
+			var d = getNum(a) - getNum(b);
+			return d == 0 ? 0 : d > 0 ? 1 : -1;
+		}
 	}
 
 	function mkBool(b) : Value {
@@ -530,6 +535,7 @@ class Eval {
 		case "&": iop((a,b)->a&b);
 		case "^": iop((a,b)->a^b);
 		case "==": mkBool(compare(v1,v2) == 0);
+		case "!=": mkBool(compare(v1,v2) != 0);
 		case ">": mkBool(compare(v1,v2) > 0);
 		case "<": mkBool(compare(v1,v2) < 0);
 		case ">=": mkBool(compare(v1,v2) >= 0);

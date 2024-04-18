@@ -1,7 +1,7 @@
-build:
-	cd hldebug-wrapper && node-gyp configure && node-gyp build
-	haxe build.hxml
+all:
+
 deps:
+	cd hldebug-wrapper && npm install && rm -rf build node_modules
 	npm install
 cleanup:
 	/bin/find . -name *.obj | xargs rm -f 
