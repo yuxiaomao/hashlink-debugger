@@ -21,5 +21,3 @@ package: cleanup build
 # - select Organization:All + Full Access
 publish:
 	vsce publish -p `cat vsce_token.txt`
-
-.PHONY: build

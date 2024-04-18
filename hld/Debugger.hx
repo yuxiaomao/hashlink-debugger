@@ -304,10 +304,7 @@ class Debugger {
 					trace("STEP");
 				case Exit:
 					trace("EXIT");
-				case Handled:
-					trace("HANDLED");
-				case Timeout:
-					trace("TIMEOUT");
+				case Handled, Timeout:
 				default:
 					trace(cmd.r);
 				}
