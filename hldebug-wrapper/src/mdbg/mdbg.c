@@ -819,7 +819,10 @@ static void* task_exception_server (mach_port_t exception_port) {
 static void wait_for_exception(debug_session *sess, int timeout /*in millis*/) {
     DEBUG_PRINT("waiting for next exception...");
 
-    kern_return_t kret = semaphore_timedwait(sess->wait_sem, (struct mach_timespec){0,timeout * 1000000});
+    mach_timespec_t wait_time;
+    wait_time.tv_sec = timeout / 1000;
+    wait_time.tv_nsec = (timeout % 1000) * 1000000;
+    kern_return_t kret = semaphore_timedwait(sess->wait_sem, wait_time);
     if(kret == KERN_OPERATION_TIMED_OUT) {
         sess->process_status = STATUS_TIMEOUT;
         DEBUG_PRINT("wait timed out!");
