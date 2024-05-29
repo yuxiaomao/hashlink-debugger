@@ -64,6 +64,9 @@
 
 #define     MAX_EXCEPTION_PORTS      16
 
+#define thread_state64_t x86_thread_state_t
+#define debug_state64_t x86_debug_state_t
+
 /* Forward declarations */
 
 boolean_t mach_exc_server(mach_msg_header_t *InHeadP, mach_msg_header_t *OutHeadP);
@@ -71,10 +74,10 @@ static struct debug_session *find_session(mach_port_t task);
 static mach_port_t get_task(pid_t pid);
 static mach_port_t get_thread(mach_port_t mach_task, uint thread_num);
 static uint64_t get_thread_id(thread_t thread);
-static x86_thread_state64_t* get_thread_state(mach_port_t mach_thread);
-static kern_return_t set_thread_state(thread_t mach_thread, x86_thread_state64_t *break_state);
-static x86_debug_state64_t* get_debug_state(thread_t mach_thread);
-static kern_return_t set_debug_state(thread_t mach_thread, x86_debug_state64_t *break_state);
+static thread_state64_t* get_thread_state(mach_port_t mach_thread);
+static kern_return_t set_thread_state(thread_t mach_thread, thread_state64_t *break_state);
+static debug_state64_t* get_debug_state(thread_t mach_thread);
+static kern_return_t set_debug_state(thread_t mach_thread, debug_state64_t *break_state);
 
 static void* task_exception_server (mach_port_t exception_port);
 
@@ -350,7 +353,8 @@ static debug_session *find_session_by_pid(pid_t pid) {
 #pragma mark Registers
 
 
-__uint64_t *get_reg( x86_thread_state64_t *regs, int r ) {
+__uint64_t *get_reg( thread_state64_t *state, int r ) {
+    x86_thread_state64_t *regs = &state->uts.ts64;
     switch( r ) {
         case REG_RAX: return &regs->__rax;
         case REG_RBX: return &regs->__rbx;
@@ -374,7 +378,8 @@ __uint64_t *get_reg( x86_thread_state64_t *regs, int r ) {
     return NULL;
 }
 
-__uint64_t *get_debug_reg( x86_debug_state64_t *regs, int r ) {
+__uint64_t *get_debug_reg( debug_state64_t *state, int r ) {
+    x86_debug_state64_t *regs = &state->uds.ds64;
     switch( r ) {
         case REG_DR0: return &regs->__dr0;
         case REG_DR1: return &regs->__dr1;
@@ -393,10 +398,10 @@ __uint64_t read_register(mach_port_t task, int thread, int reg, bool is64 ) {
     mach_port_t mach_thread = get_thread(task, thread);
 
     if(reg >= REG_DR0) {
-        x86_debug_state64_t *regs = get_debug_state(mach_thread);
+        debug_state64_t *regs = get_debug_state(mach_thread);
         rdata = get_debug_reg(regs, reg - 4);
     } else {
-        x86_thread_state64_t *regs = get_thread_state(mach_thread);
+        thread_state64_t *regs = get_thread_state(mach_thread);
         rdata = get_reg(regs, reg);
     }
 
@@ -412,14 +417,14 @@ static kern_return_t write_register(mach_port_t task, int thread, int reg, void 
     mach_port_t mach_thread = get_thread(task, thread);
 
     if(reg >= REG_DR0) {
-        x86_debug_state64_t *regs = get_debug_state(mach_thread);
+        debug_state64_t *regs = get_debug_state(mach_thread);
         rdata = get_debug_reg(regs, reg - 4);
         DEBUG_PRINT_VERBOSE("register flag for %s was: 0x%08x\n",get_register_name(reg), *rdata);
 
         *rdata = (__uint64_t)value;
         set_debug_state(mach_thread, regs);
     } else {
-        x86_thread_state64_t *regs = get_thread_state(mach_thread);
+        thread_state64_t *regs = get_thread_state(mach_thread);
         rdata = get_reg(regs, reg);
         DEBUG_PRINT_VERBOSE("register flag for %s was: 0x%08x\n",get_register_name(reg), *rdata);
 
@@ -512,13 +517,13 @@ static uint64_t get_thread_id(thread_t thread) {
     return tinfo->thread_id;
 }
 
-static x86_thread_state64_t* get_thread_state(thread_t mach_thread) {
+static thread_state64_t* get_thread_state(thread_t mach_thread) {
 
-    x86_thread_state64_t* state;
-    mach_msg_type_number_t stateCount = x86_THREAD_STATE64_COUNT;
+    thread_state64_t* state;
+    mach_msg_type_number_t stateCount = MACHINE_THREAD_STATE_COUNT;
 
-    state = safe_malloc(sizeof(x86_thread_state64_t));
-    kern_return_t kret = thread_get_state( mach_thread, x86_THREAD_STATE64, (thread_state_t)state, &stateCount);
+    state = safe_malloc(sizeof(thread_state64_t));
+    kern_return_t kret = thread_get_state( mach_thread, MACHINE_THREAD_STATE, (thread_state_t)state, &stateCount);
     if (kret != KERN_SUCCESS) {
         DEBUG_PRINT("Error failed with message %s!\n", mach_error_string(kret));
         exit(0);
@@ -526,9 +531,9 @@ static x86_thread_state64_t* get_thread_state(thread_t mach_thread) {
     return state;
 }
 
-static kern_return_t set_thread_state(thread_t mach_thread, x86_thread_state64_t *break_state) {
+static kern_return_t set_thread_state(thread_t mach_thread, thread_state64_t *break_state) {
 
-    kern_return_t kret = thread_set_state(mach_thread, x86_THREAD_STATE64, (thread_state_t)break_state, x86_THREAD_STATE64_COUNT);
+    kern_return_t kret = thread_set_state(mach_thread, MACHINE_THREAD_STATE, (thread_state_t)break_state, MACHINE_THREAD_STATE_COUNT);
     if (kret != KERN_SUCCESS) {
         DEBUG_PRINT("Error failed with message %s!\n", mach_error_string(kret));
         exit(0);
@@ -539,12 +544,12 @@ static kern_return_t set_thread_state(thread_t mach_thread, x86_thread_state64_t
 
 // Debug register state
 
-static x86_debug_state64_t* get_debug_state(thread_t mach_thread) {
+static debug_state64_t* get_debug_state(thread_t mach_thread) {
 
-    x86_debug_state64_t* state;
+    debug_state64_t* state;
     mach_msg_type_number_t stateCount = x86_DEBUG_STATE64_COUNT;
 
-    state = safe_malloc(sizeof(x86_debug_state64_t));
+    state = safe_malloc(sizeof(debug_state64_t));
     kern_return_t kret = thread_get_state( mach_thread, x86_DEBUG_STATE64, (thread_state_t)state, &stateCount);
     if (kret != KERN_SUCCESS) {
         DEBUG_PRINT("Error failed with message %s!\n", mach_error_string(kret));
@@ -553,7 +558,7 @@ static x86_debug_state64_t* get_debug_state(thread_t mach_thread) {
     return state;
 }
 
-static kern_return_t set_debug_state(thread_t mach_thread, x86_debug_state64_t *break_state) {
+static kern_return_t set_debug_state(thread_t mach_thread, debug_state64_t *break_state) {
 
     kern_return_t kret = thread_set_state(mach_thread, x86_DEBUG_STATE64, (thread_state_t)break_state, x86_DEBUG_STATE64_COUNT);
     if (kret != KERN_SUCCESS) {
@@ -620,7 +625,7 @@ static kern_return_t attach_to_task(mach_port_t task, pid_t pid) {
     // store current exception ports
     save_exception_ports(task, (exception_ports_info*)sess->old_exception_ports);
 
-    kret = task_set_exception_ports(task, EXC_MASK_ALL, sess->exception_port, EXCEPTION_STATE_IDENTITY|MACH_EXCEPTION_CODES, x86_THREAD_STATE64);
+    kret = task_set_exception_ports(task, EXC_MASK_ALL, sess->exception_port, EXCEPTION_STATE_IDENTITY|MACH_EXCEPTION_CODES, MACHINE_THREAD_STATE);
     RETURN_ON_MACH_ERROR(kret,"task_set_exception_ports failed");
 
     // launch mach exception port thread //
@@ -702,14 +707,14 @@ extern kern_return_t catch_mach_exception_raise_state_identity(
 	mach_msg_type_number_t *new_stateCnt
 ) {
 
-    x86_thread_state64_t *state = (x86_thread_state64_t *) old_state;
-    x86_thread_state64_t *newState = (x86_thread_state64_t *) new_state;
+    thread_state64_t *state = (thread_state64_t *) old_state;
+    thread_state64_t *newState = (thread_state64_t *) new_state;
 
     debug_session *sess = find_session(task);
     sess->current_thread = get_thread_id(thread); /* set system-wide thread id */
 
     DEBUG_PRINT("exception occured on thread (%i): %s",sess->current_thread, exception_to_string(exception));
-    DEBUG_PRINT("stack address: 0x%02lx", state->__rip);
+    DEBUG_PRINT("stack address: 0x%02lx", state->uts.ts64.__rip);
 
 
     if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) { // handling UNIX soft signal
@@ -740,8 +745,8 @@ extern kern_return_t catch_mach_exception_raise_state_identity(
         task_suspend(sess->task);
 
         // check if single step mode
-        if(state->__rflags & SINGLESTEP_TRAP) {
-            state->__rflags &= ~SINGLESTEP_TRAP; // clear single-step
+        if(state->uts.ts64.__rflags & SINGLESTEP_TRAP) {
+            state->uts.ts64.__rflags &= ~SINGLESTEP_TRAP; // clear single-step
             sess->process_status = STATUS_SINGLESTEP;
             DEBUG_PRINT("SINGLE STEP");
         } else {
@@ -751,7 +756,7 @@ extern kern_return_t catch_mach_exception_raise_state_identity(
         // move past breakpoint by setting old to new thread state
         *newState = *state;
         *new_stateCnt = old_stateCnt;
-        *flavor = x86_THREAD_STATE64;
+        *flavor = MACHINE_THREAD_STATE;
 
         semaphore_signal(sess->wait_sem);
 
