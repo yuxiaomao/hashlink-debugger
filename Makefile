@@ -13,7 +13,7 @@ build:
 	haxe build.hxml
 package: cleanup build
 	#npm install @vscode/vsce -g
-	vsce package
+	vsce package --follow-symlinks
 
 # to get token :
 # - visit https://dev.azure.com/ncannasse/
