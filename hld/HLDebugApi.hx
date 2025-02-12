@@ -11,7 +11,7 @@ class HLDebugApi implements Api {
 	static function debugRead( pid : Int, ptr : hl.Bytes, buffer : Buffer, size : Int ) : Bool { return false; }
 	static function debugWrite( pid : Int, ptr : hl.Bytes, buffer : Buffer, size : Int ) : Bool { return false; }
 	static function debugFlush( pid : Int, ptr : hl.Bytes, size : Int ) : Bool { return false; }
-	static function debugWait( pid : Int, threadId : hl.Ref<Int>, timeout : Int ) : Int { return 0; }
+	static function debugWait( pid : Int, threadId : hl.Ref<Int>, timeout : Int, code : hl.Ref<Int>, addr : hl.Ref<Pointer>, info1 : hl.Ref<Int>, info2 : hl.Ref<Pointer> ) : Int { return 0; }
 	static function debugResume( pid : Int, tid : Int ) : Bool { return false; }
 	static function debugReadRegister( pid : Int, tid : Int, register : Register, is64 : Bool ) : Pointer { return null; }
 	static function debugWriteRegister( pid : Int, tid : Int, register : Register, v : Pointer, is64 : Bool ) : Bool { return false; }
@@ -64,10 +64,14 @@ class HLDebugApi implements Api {
 		return debugFlush(pid, ptr, size);
 	}
 
-	public function wait( timeout : Int ) : { r : WaitResult, tid : Int } {
+	public function wait( timeout : Int ) : { r : WaitResult, tid : Int, code : Int, addr : Pointer, info1 : Int, info2 : Pointer } {
 		var tid = 0;
-		var r = debugWait(pid, tid, timeout);
-		return { r : cast r, tid : tid };
+		var code = 0;
+		var addr = Pointer.make(0, 0);
+		var info1 = 0;
+		var info2 = Pointer.make(0, 0);
+		var r = debugWait(pid, tid, timeout, code, addr, info1, info2);
+		return { r : cast r, tid : tid, code : code, addr : addr, info1 : info1, info2 : info2 };
 	}
 
 	public function resume( tid : Int ) : Bool {

@@ -9,7 +9,7 @@ extern "C" {
 	bool hl_debug_read(int pid, vbyte* addr, vbyte* buffer, int size);
 	bool hl_debug_write(int pid, vbyte* addr, vbyte* buffer, int size);
 	bool hl_debug_flush(int pid, vbyte* addr, int size);
-	int hl_debug_wait(int pid, int* thread, int timeout);
+	int hl_debug_wait(int pid, int* thread, int timeout, int* code, int64* addr, int* info1, int64* info2);
 	bool hl_debug_resume(int pid, int thread);
 	void* hl_debug_read_register(int pid, int thread, int reg, bool is64);
 	bool hl_debug_write_register(int pid, int thread, int reg, void* value, bool is64);
@@ -96,13 +96,23 @@ Napi::Buffer<int> debugWait(const Napi::CallbackInfo& info) {
 
 	int pid = info[0].As<Napi::Number>().Int32Value();
 	int size = info[1].As<Napi::Number>().Int32Value();
-	
+
 	int threadId;
-	int r = hl_debug_wait(pid, &threadId, size);
-	
-	Napi::Buffer<int> buffer = Napi::Buffer<int>::New(env, 2);
+	int code;
+	int64 addr;
+	int info1;
+	int64 info2;
+	int r = hl_debug_wait(pid, &threadId, size, &code, &addr, &info1, &info2);
+
+	Napi::Buffer<int> buffer = Napi::Buffer<int>::New(env, 8);
 	buffer.Data()[0] = r;
 	buffer.Data()[1] = threadId;
+	buffer.Data()[2] = code;
+	buffer.Data()[3] = addr >> 32;
+	buffer.Data()[4] = addr & 0xFFFFFFFF;
+	buffer.Data()[5] = info1;
+	buffer.Data()[6] = info2 >> 32;
+	buffer.Data()[7] = info2 & 0xFFFFFFFF;
 	return buffer;
 }
 

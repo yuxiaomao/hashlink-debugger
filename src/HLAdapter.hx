@@ -448,8 +448,8 @@ class HLAdapter extends DebugSession {
 		for( t in dbg.getThreads() ) {
 			// skipped stopped thread with no stack (thread allocated for breaking on windows)
 			if( t == dbg.currentThread && t != dbg.mainThread && !dbg.hasStack() ) {
-				debug("Skip thread "+t);
-				continue;
+				debug("Should skip thread, but not doing it for test "+t);
+				// continue;
 			}
 			if( !prev.remove(t) ) {
 				debug("Started thread "+t);

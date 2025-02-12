@@ -321,6 +321,9 @@ class Debugger {
 				default:
 					trace(cmd.r);
 				}
+			if( cmd.r != Timeout && cmd.r != Handled ) { // cmd.r == Error
+				trace('cmd: r:${cmd.r}, tid:${cmd.tid}, code:${cmd.code}, addr:${cmd.addr}, info1:${cmd.info1}, info2:${cmd.info2}');
+			}
 
 			var tid = cmd.tid;
 			switch( cmd.r ) {
@@ -463,8 +466,10 @@ class Debugger {
 			};
 			threads.set(tid, t);
 		}
-		if( !threads.exists(currentThread) )
+		if( !threads.exists(currentThread) ) {
+			trace("current thread does not exist " + currentThread);
 			threads.set(currentThread,{ id : currentThread, stackTop: null, exception: null, name : null });
+		}
 	}
 
 	function readVMExceptionStack(base : Pointer, count : Int) : Array<StackRawInfo> {
@@ -656,6 +661,7 @@ class Debugger {
 	function makeStack( tid, isWatchbreak : Bool, max = 0 ) {
 		var stack = [];
 		var tinf = threads.get(tid);
+		trace("Current thread " + tid + ", threads: " + [for (t in threads) '(id:${t.id},name:${t.name},stackTop:${t.stackTop})']);
 		if( tinf == null || tinf.stackTop == null )
 			return stack;
 		var esp = getReg(tid, Esp);

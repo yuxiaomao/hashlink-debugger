@@ -39,7 +39,7 @@ interface Api {
 	function writeByte( ptr : Pointer, pos : Int, value : Int ) : Void;
 
 	function flush( ptr : Pointer, size : Int ) : Bool;
-	function wait( timeout : Int ) : { r : WaitResult, tid : Int };
+	function wait( timeout : Int ) : { r : WaitResult, tid : Int, code : Int, addr : Pointer, info1 : Int, info2 : Pointer };
 	function resume( tid : Int ) : Bool;
 	function readRegister( tid : Int, register : Register ) : Pointer;
 	function writeRegister( tid : Int, register : Register, v : Pointer ) : Bool;

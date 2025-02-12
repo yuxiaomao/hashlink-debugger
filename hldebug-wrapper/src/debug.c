@@ -211,7 +211,7 @@ static void *get_reg( int r ) {
 }
 #endif
 
-HL_API int hl_debug_wait( int pid, int *thread, int timeout ) {
+HL_API int hl_debug_wait( int pid, int *thread, int timeout, int *code, double* addr, int *info1, double *info2 ) {
 #	if defined(HL_WIN)
 	DEBUG_EVENT e;
 	if( !WaitForDebugEvent(&e,timeout) )
@@ -219,6 +219,12 @@ HL_API int hl_debug_wait( int pid, int *thread, int timeout ) {
 	*thread = e.dwThreadId;
 	switch( e.dwDebugEventCode ) {
 	case EXCEPTION_DEBUG_EVENT:
+		*code = e.u.Exception.ExceptionRecord.ExceptionCode;
+		*addr = (int_val)e.u.Exception.ExceptionRecord.ExceptionAddress;
+		if( e.u.Exception.ExceptionRecord.NumberParameters > 0 )
+			*info1 = (int_val)e.u.Exception.ExceptionRecord.ExceptionInformation[0];
+		if( e.u.Exception.ExceptionRecord.NumberParameters > 1 )
+			*info2 = (int_val)e.u.Exception.ExceptionRecord.ExceptionInformation[1];
 		switch( e.u.Exception.ExceptionRecord.ExceptionCode ) {
 		case EXCEPTION_BREAKPOINT:
 		case 0x4000001F: // STATUS_WX86_BREAKPOINT
@@ -423,7 +429,7 @@ DEFINE_PRIM(_BOOL, debug_breakpoint, _I32);
 DEFINE_PRIM(_BOOL, debug_read, _I32 _BYTES _BYTES _I32);
 DEFINE_PRIM(_BOOL, debug_write, _I32 _BYTES _BYTES _I32);
 DEFINE_PRIM(_BOOL, debug_flush, _I32 _BYTES _I32);
-DEFINE_PRIM(_I32, debug_wait, _I32 _REF(_I32) _I32);
+DEFINE_PRIM(_I32, debug_wait, _I32 _REF(_I32) _I32 _REF(_I32) _REF(_F64) _REF(_I32) _REF(_F64));
 DEFINE_PRIM(_BOOL, debug_resume, _I32 _I32);
 DEFINE_PRIM(_BYTES, debug_read_register, _I32 _I32 _I32 _BOOL);
 DEFINE_PRIM(_BOOL, debug_write_register, _I32 _I32 _I32 _BYTES _BOOL);

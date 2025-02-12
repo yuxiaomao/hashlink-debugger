@@ -78,11 +78,15 @@ class NodeDebugApiNative implements Api {
 		return Native.debugFlush(pid, makePointer(ptr).toBinaryString(), size);
 	}
 
-	public function wait( timeout : Int ) : { r : WaitResult, tid : Int } {
+	public function wait( timeout : Int ) : { r : WaitResult, tid : Int, code : Int, addr : Pointer, info1 : Int, info2 : Pointer } {
 		var buf = Native.debugWait(pid, timeout);
 		var r = buf.readInt32LE(0);
 		var tid = buf.readInt32LE(4);
-		return { r: cast r, tid: tid };
+		var code = buf.readInt32LE(8);
+		var addr = Pointer.make(buf.readInt32LE(12), buf.readInt32LE(16));
+		var info1 = buf.readInt32LE(20);
+		var info2 = Pointer.make(buf.readInt32LE(24), buf.readInt32LE(28));
+		return { r: cast r, tid: tid, code : code, addr : addr, info1 : info1, info2 : info2 };
 	}
 
 	public function resume( tid : Int ) : Bool {
