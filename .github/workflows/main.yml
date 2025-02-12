@@ -44,8 +44,8 @@ jobs:
         node --version
     - name: Install global vsce package
       run: |
-        npm install vsce -g
-        npm list vsce -g
+        npm install @vscode/vsce -g
+        npm list @vscode/vsce -g
     - name: Package nightly build
       run: |
         export PKG_VER=$(npm pkg get version | xargs)

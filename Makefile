@@ -12,10 +12,10 @@ build:
 	haxe -cp src -lib vscode -lib vshaxe -lib vscode-debugadapter -D js-es=6 -js extension.js Extension
 	haxe build.hxml
 package: cleanup build
-	#npm install vsce -g
+	#npm install @vscode/vsce -g
 	vsce package
-	
-# to get token : 
+
+# to get token :
 # - visit https://dev.azure.com/ncannasse/
 # - login (@hotmail)
 # - click user / security / Personal Access token
